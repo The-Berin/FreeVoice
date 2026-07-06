@@ -231,6 +231,52 @@ public sealed class Segmented : Control
     }
 }
 
+/// <summary>Panel that is transparent to mouse hit-testing — clicks and drags fall
+/// through to the form, giving native window dragging over the custom title bar.</summary>
+public class HitTransparentPanel : Panel
+{
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_NCHITTEST = 0x84;
+        const int HTTRANSPARENT = -1;
+        if (m.Msg == WM_NCHITTEST)
+        {
+            m.Result = HTTRANSPARENT;
+            return;
+        }
+        base.WndProc(ref m);
+    }
+}
+
+/// <summary>Panel that lets hit-tests through only near the form's edges, so the
+/// native resize grips keep working under docked content.</summary>
+public class EdgeAwarePanel : Panel
+{
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_NCHITTEST = 0x84;
+        const int HTTRANSPARENT = -1;
+        if (m.Msg == WM_NCHITTEST)
+        {
+            var form = FindForm();
+            if (form is { WindowState: FormWindowState.Normal })
+            {
+                var screenPt = new Point((short)(m.LParam.ToInt64() & 0xFFFF),
+                                         (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
+                var formPt = form.PointToClient(screenPt);
+                const int margin = 7;
+                if (formPt.X < margin || formPt.X >= form.Width - margin ||
+                    formPt.Y < margin || formPt.Y >= form.Height - margin)
+                {
+                    m.Result = HTTRANSPARENT;
+                    return;
+                }
+            }
+        }
+        base.WndProc(ref m);
+    }
+}
+
 /// <summary>Thin draggable seek bar for the player.</summary>
 public sealed class SeekBar : Control
 {

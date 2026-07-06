@@ -19,8 +19,8 @@ public sealed class MainForm : Form
     private Panel _titleBar = null!;
     private const int ResizeMargin = 7;
 
-    private readonly Panel _sidebar = new();
-    private readonly Panel _content = new();
+    private readonly Panel _sidebar = new EdgeAwarePanel();
+    private readonly Panel _content = new EdgeAwarePanel();
     private readonly Dictionary<string, Panel> _pages = new();
     private readonly Dictionary<string, Button> _nav = new();
     private Label _sideStatus = null!;
@@ -41,6 +41,8 @@ public sealed class MainForm : Form
     private Panel _jobsPanel = null!;
     private sealed class JobHolder { public JobDto Job = new(); }
     private readonly Dictionary<string, (Panel Row, JobHolder Holder)> _jobRows = new();
+    // play buttons update their glyph in place — lists never rebuild just because playback changed
+    private readonly List<(Button Btn, string Path)> _playButtons = new();
 
     // Voices
     private TextBox _voiceName = null!, _voiceTranscript = null!;
@@ -58,6 +60,10 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
+        // Borderless-with-native-behaviors: WS_CAPTION + WS_THICKFRAME are re-added in
+        // CreateParams and the caption is reclaimed in WM_NCCALCSIZE — so move, Aero
+        // snap, animations and shadows are all native, but Windows never paints its
+        // (accent-colored) title bar or border.
         FormBorderStyle = FormBorderStyle.None;
         Text = "FreeVoice Studio";
         Size = new Size(1080, 700);
@@ -65,7 +71,6 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Back;
         Font = new Font("Segoe UI", 9.5f);
-        Padding = new Padding(1); // room for our own 1px border — no Windows accent anywhere
         SetStyle(ControlStyles.ResizeRedraw, true);
         try { Icon = new Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); } catch { }
 
@@ -98,10 +103,8 @@ public sealed class MainForm : Form
         playerTick.Tick += (_, _) => UpdatePlayerBar();
         playerTick.Start();
 
-        _player.PlaybackChanged += () => { if (!IsDisposed) BeginInvoke(() => { InvalidateListButtons(); UpdatePlayerBar(); }); };
+        _player.PlaybackChanged += () => { if (!IsDisposed) BeginInvoke(() => { UpdatePlayButtons(); UpdatePlayerBar(); }); };
 
-        Load += (_, _) => MaximizedBounds = Screen.GetWorkingArea(this);
-        LocationChanged += (_, _) => MaximizedBounds = Screen.GetWorkingArea(this);
 
         Shown += async (_, _) =>
         {
@@ -122,9 +125,21 @@ public sealed class MainForm : Form
 
     #region custom chrome
 
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            const int WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000,
+                      WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000;
+            cp.Style |= WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+            return cp;
+        }
+    }
+
     private void BuildTitleBar()
     {
-        _titleBar = new Panel { Dock = DockStyle.Top, Height = 34, BackColor = Theme.Panel };
+        _titleBar = new HitTransparentPanel { Dock = DockStyle.Top, Height = 34, BackColor = Theme.Panel };
 
         var logo = new PictureBox
         {
@@ -145,31 +160,34 @@ public sealed class MainForm : Form
         _titleBar.Controls.Add(logo);
         _titleBar.Controls.Add(title);
 
-        Button MakeCaption(string glyph, Action onClick, bool danger = false)
+        // caption buttons live on the FORM (the title panel is hit-transparent so
+        // native dragging works anywhere on it — its children would be skipped)
+        Button MakeCaption(string glyph, int fromRight, Action onClick, bool danger = false)
         {
             var b = new Button
             {
                 Text = glyph,
-                Dock = DockStyle.Right,
-                Width = 46,
+                Size = new Size(46, 33),
                 FlatStyle = FlatStyle.Flat,
                 ForeColor = Theme.Sub,
                 BackColor = Theme.Panel,
                 Font = new Font("Segoe UI", 9f),
                 Tag = "custom",
                 TabStop = false,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
             };
+            b.Location = new Point(Width - fromRight, 1);
             b.FlatAppearance.BorderSize = 0;
             b.FlatAppearance.MouseOverBackColor = danger ? Color.FromArgb(200, 55, 55) : Theme.Card2;
             b.Click += (_, _) => onClick();
+            Controls.Add(b);
+            b.BringToFront();
             return b;
         }
 
-        // Dock=Right stacks later additions closer to the edge — add close LAST so it's rightmost
-        _titleBar.Controls.Add(MakeCaption("—", () => WindowState = FormWindowState.Minimized));
-        _titleBar.Controls.Add(MakeCaption("▢", ToggleMaximize));
-        _titleBar.Controls.Add(MakeCaption("✕", Close, danger: true));
-        _titleBar.MouseDoubleClick += (_, _) => ToggleMaximize();
+        MakeCaption("✕", 47, Close, danger: true);
+        MakeCaption("▢", 93, ToggleMaximize);
+        MakeCaption("—", 139, () => WindowState = FormWindowState.Minimized);
     }
 
     private void ToggleMaximize()
@@ -177,30 +195,42 @@ public sealed class MainForm : Form
             ? FormWindowState.Normal
             : FormWindowState.Maximized;
 
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e);
-        if (WindowState != FormWindowState.Maximized)
-        {
-            using var pen = new Pen(Theme.Border2);
-            e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
-        }
-    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll")]
+    private static extern bool IsZoomed(IntPtr hWnd);
 
     protected override void WndProc(ref Message m)
     {
-        const int WM_NCHITTEST = 0x84;
+        const int WM_NCCALCSIZE = 0x83, WM_NCHITTEST = 0x84;
         const int HTCLIENT = 1, HTCAPTION = 2;
         const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
                   HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
+
+        // claim the entire window as client area — Windows never draws its caption/border
+        if (m.Msg == WM_NCCALCSIZE && m.WParam != IntPtr.Zero)
+        {
+            if (IsZoomed(Handle))
+            {
+                // maximized windows extend past the monitor by the (now-hidden) frame — pull back in
+                var rc = Marshal.PtrToStructure<RECT>(m.LParam);
+                int pad = 8;
+                rc.Left += pad; rc.Top += pad; rc.Right -= pad; rc.Bottom -= pad;
+                Marshal.StructureToPtr(rc, m.LParam, false);
+            }
+            m.Result = IntPtr.Zero;
+            return;
+        }
 
         base.WndProc(ref m);
 
         if (m.Msg == WM_NCHITTEST && (int)m.Result == HTCLIENT)
         {
-            var pt = PointToClient(new Point((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF)));
+            var pt = PointToClient(new Point((short)(m.LParam.ToInt64() & 0xFFFF),
+                                             (short)((m.LParam.ToInt64() >> 16) & 0xFFFF)));
 
-            if (WindowState != FormWindowState.Maximized)
+            if (!IsZoomed(Handle))
             {
                 bool left = pt.X < ResizeMargin, right = pt.X >= Width - ResizeMargin;
                 bool top = pt.Y < ResizeMargin, bottom = pt.Y >= Height - ResizeMargin;
@@ -219,13 +249,9 @@ public sealed class MainForm : Form
                 if (hit != 0) { m.Result = hit; return; }
             }
 
-            // drag anywhere on the title bar that isn't a button
+            // the title strip is a native caption: drag, snap, double-click-maximize all work
             if (pt.Y < _titleBar.Height)
-            {
-                var child = _titleBar.GetChildAtPoint(_titleBar.PointToClient(PointToScreen(pt)));
-                if (child is not Button)
-                    m.Result = HTCAPTION;
-            }
+                m.Result = HTCAPTION;
         }
     }
 
@@ -540,8 +566,7 @@ public sealed class MainForm : Form
     /// so buttons never vanish under the user's cursor mid-click.</summary>
     private void RenderJobs()
     {
-        string key = string.Join("|", _state.Jobs.Select(j => j.Id + j.State + (j.Result ?? "")))
-                     + "~" + (_player.Current ?? "") + _player.IsPlaying;
+        string key = string.Join("|", _state.Jobs.Select(j => j.Id + j.State + (j.Result ?? "")));
 
         if (key != _jobsStructureKey)
         {
@@ -549,6 +574,7 @@ public sealed class MainForm : Form
             _jobsPanel.SuspendLayout();
             _jobsPanel.Controls.Clear();
             _jobRows.Clear();
+            _playButtons.RemoveAll(pb => pb.Btn.IsDisposed || pb.Btn.Parent == null);
             int y = 0;
             foreach (var j in _state.Jobs)
             {
@@ -654,8 +680,9 @@ public sealed class MainForm : Form
         if (j0.State == "done" && j0.Result != null && _supervisor.BackendDir != null)
         {
             string path = Path.Combine(_supervisor.BackendDir, "output", j0.Result);
-            var play = MakeMiniButton(_player.Current == path && _player.IsPlaying ? "❚❚" : "► play", new Point(ContentWidth - 176, btnY));
+            var play = MakeMiniButton(PlayGlyph(path), new Point(ContentWidth - 176, btnY));
             play.Click += (_, _) => _player.Toggle(path);
+            _playButtons.Add((play, path));
             row.Controls.Add(play);
         }
         else if (j0.State is "queued" or "running")
@@ -815,8 +842,9 @@ public sealed class MainForm : Form
             if (_supervisor.BackendDir != null)
             {
                 string path = Path.Combine(_supervisor.BackendDir, "voices", v.File);
-                var play = MakeMiniButton(_player.Current == path && _player.IsPlaying ? "❚❚" : "► play", new Point(ContentWidth - 290, 14));
+                var play = MakeMiniButton(PlayGlyph(path), new Point(ContentWidth - 290, 14));
                 play.Click += (_, _) => _player.Toggle(path);
+                _playButtons.Add((play, path));
                 row.Controls.Add(play);
             }
             var edit = MakeMiniButton("edit", new Point(ContentWidth - 182, 14));
@@ -1120,8 +1148,9 @@ public sealed class MainForm : Form
             if (_supervisor.BackendDir != null)
             {
                 string path = OutputPath(o.File);
-                var play = MakeMiniButton(_player.Current == path && _player.IsPlaying ? "❚❚" : "► play", new Point(ContentWidth - 176, 11));
+                var play = MakeMiniButton(PlayGlyph(path), new Point(ContentWidth - 176, 11));
                 play.Click += (_, _) => _player.Toggle(path);
+                _playButtons.Add((play, path));
                 row.Controls.Add(play);
             }
             var del = MakeMiniButton("✕", new Point(ContentWidth - 62, 11));
@@ -1226,12 +1255,14 @@ public sealed class MainForm : Form
         RefreshLists();
     }
 
-    private void InvalidateListButtons()
+    private string PlayGlyph(string path)
+        => _player.Current == path && _player.IsPlaying ? "❚❚" : "► play";
+
+    private void UpdatePlayButtons()
     {
-        _jobsStructureKey = "";
-        _lastOutputsJson = "";
-        _lastVoicesJson = "";
-        RefreshLists();
+        _playButtons.RemoveAll(pb => pb.Btn.IsDisposed);
+        foreach (var (btn, path) in _playButtons)
+            btn.Text = PlayGlyph(path);
     }
 
     private void RefreshLists()
@@ -1251,7 +1282,7 @@ public sealed class MainForm : Form
             _voice.SelectedIndex = idx >= 0 ? idx : 0;
         }
 
-        string outputsJson = System.Text.Json.JsonSerializer.Serialize(_state.Outputs) + _player.Current + _player.IsPlaying;
+        string outputsJson = System.Text.Json.JsonSerializer.Serialize(_state.Outputs);
         if (outputsJson != _lastOutputsJson)
         {
             _lastOutputsJson = outputsJson;

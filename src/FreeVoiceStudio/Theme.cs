@@ -14,9 +14,9 @@ public static class Theme
     public static readonly Color Text = Color.FromArgb(234, 234, 242);
     public static readonly Color Sub = Color.FromArgb(154, 154, 171);
     public static readonly Color Dim = Color.FromArgb(107, 107, 124);
-    // FreeVoice brand: violet gradient (Baron's call), circle mark keeps it distinct from FreeFlow
-    public static readonly Color A1 = Color.FromArgb(109, 74, 255);
-    public static readonly Color A2 = Color.FromArgb(165, 74, 255);
+    // FreeVoice accent: light green → light blue (Baron's pick); everything else matches FreeFlow
+    public static readonly Color A1 = Color.FromArgb(110, 231, 167);
+    public static readonly Color A2 = Color.FromArgb(90, 200, 250);
     public static readonly Color Ok = Color.FromArgb(79, 200, 128);
     public static readonly Color Err = Color.FromArgb(224, 112, 80);
 

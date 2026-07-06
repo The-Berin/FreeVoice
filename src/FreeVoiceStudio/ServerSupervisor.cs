@@ -80,6 +80,13 @@ public sealed class ServerSupervisor : IDisposable
         return false;
     }
 
+    /// <summary>Let the server outlive the app (jobs still rendering).</summary>
+    public void Detach()
+    {
+        _child?.Dispose();
+        _child = null;
+    }
+
     public void Dispose()
     {
         // only kill a server we started ourselves

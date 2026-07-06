@@ -14,8 +14,9 @@ public static class Theme
     public static readonly Color Text = Color.FromArgb(234, 234, 242);
     public static readonly Color Sub = Color.FromArgb(154, 154, 171);
     public static readonly Color Dim = Color.FromArgb(107, 107, 124);
-    public static readonly Color A1 = Color.FromArgb(109, 74, 255);
-    public static readonly Color A2 = Color.FromArgb(165, 74, 255);
+    // FreeVoice brand: coral → amber (deliberately NOT FreeFlow's violet)
+    public static readonly Color A1 = Color.FromArgb(255, 77, 109);
+    public static readonly Color A2 = Color.FromArgb(255, 158, 74);
     public static readonly Color Ok = Color.FromArgb(79, 200, 128);
     public static readonly Color Err = Color.FromArgb(224, 112, 80);
 

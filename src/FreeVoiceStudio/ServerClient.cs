@@ -32,6 +32,8 @@ public class JobDto
     [JsonPropertyName("done")] public int Done { get; set; }
     [JsonPropertyName("total")] public int Total { get; set; }
     [JsonPropertyName("eta_seconds")] public int? EtaSeconds { get; set; }
+    [JsonPropertyName("est_seconds")] public int? EstSeconds { get; set; }
+    [JsonPropertyName("started")] public double? Started { get; set; }
     [JsonPropertyName("result")] public string? Result { get; set; }
     [JsonPropertyName("words")] public int Words { get; set; }
 }

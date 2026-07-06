@@ -136,6 +136,15 @@ def delete_voice(name):
 
 # ------------------------------------------------------------------ text
 
+def normalize_for_tts(text):
+    """Chatterbox reads ALL-CAPS words letter-by-letter like acronyms.
+    Lowercase shouted words (keep real acronyms: 3 letters or fewer)."""
+    def fix(m):
+        w = m.group(0)
+        return w if len(w) <= 3 else w.capitalize() if m.start() == 0 else w.lower()
+    return re.sub(r"\b[A-Z]{2,}\b", fix, text)
+
+
 def split_chunks(text, max_chars=300):
     text = re.sub(r"[ \t]+", " ", text.strip())
     sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s]
@@ -261,9 +270,18 @@ def generate(job):
     import soundfile as sf
     from datetime import datetime
 
-    script = job["script"]
+    script = normalize_for_tts(job["script"])
     engine_id = job["engine"]
     voice = job.get("voice") or ""
+
+    seed = int(job.get("params", {}).get("seed") or 0)
+    if seed > 0:
+        try:
+            import torch
+            torch.manual_seed(seed)
+        except Exception:
+            pass
+
     segments = parse_script(script, voice)
     work = []
     for seg_voice, seg_text in segments:
@@ -272,18 +290,32 @@ def generate(job):
     job["total"] = len(work)
     job["done"] = 0
 
+    # honest time estimate: engine speed by word count, plus warm-up on first use
+    eng = next((e for e in ENGINES if e["id"] == engine_id), None)
+    words = len(script.split())
+    est = words * (eng["sec_per_word"] if eng else 3.0)
+    if engine_id not in _models:
+        est += 90 if engine_id != "kokoro" else 15
+    job["est_seconds"] = max(4, int(est))
+    job["started"] = time.time()
+
     t0 = time.time()
     pieces, sr = [], 24000
     for i, (seg_voice, chunk) in enumerate(work):
         if job.get("cancel"):
             raise RuntimeError("cancelled")
-        job["status_text"] = f"chunk {i+1}/{len(work)}" + (f" — {seg_voice}" if seg_voice else "")
+        warmup = engine_id not in _models
+        job["status_text"] = (f"warming up the engine — first use takes a minute or two… "
+                              if warmup else "") + \
+                             f"chunk {i+1}/{len(work)}" + (f" — {seg_voice}" if seg_voice else "")
         y, sr = synth_segment(engine_id, chunk, seg_voice, job.get("kokoro_voice"), job.get("params", {}))
         pieces.append(y)
         job["done"] = i + 1
         if i + 1 < len(work):
+            # refine the estimate from real chunk timings
             per = (time.time() - t0) / (i + 1)
             job["eta_seconds"] = int(per * (len(work) - i - 1))
+            job["est_seconds"] = int(time.time() - job["started"]) + job["eta_seconds"]
 
     job["status_text"] = "mixing…"
     audio = crossfade_concat(pieces, sr)

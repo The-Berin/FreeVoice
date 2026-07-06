@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 
 namespace FreeVoiceStudio;
 
@@ -10,6 +10,8 @@ public sealed class MainForm : Form
     private StateDto _state = new();
     private string _lastJobsJson = "", _lastVoicesJson = "", _lastOutputsJson = "";
     private bool _connected;
+    private NotifyIcon? _tray;
+    private readonly Dictionary<string, string> _knownJobStates = new();
 
     private readonly Panel _sidebar = new();
     private readonly Panel _content = new();
@@ -28,6 +30,7 @@ public sealed class MainForm : Form
     private Segmented _format = null!;
     private FvToggle _clean = null!;
     private FvSlider _exaggeration = null!, _cfg = null!, _speed = null!, _nfe = null!;
+    private NumericUpDown _seed = null!;
     private GradientButton _generate = null!;
     private Panel _jobsPanel = null!;
 
@@ -43,8 +46,8 @@ public sealed class MainForm : Form
     public MainForm()
     {
         Text = "FreeVoice Studio";
-        Size = new Size(1120, 780);
-        MinimumSize = new Size(980, 660);
+        Size = new Size(1080, 700);
+        MinimumSize = new Size(940, 620);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Back;
         Font = new Font("Segoe UI", 9.5f);
@@ -65,7 +68,12 @@ public sealed class MainForm : Form
         ShowPage("Studio");
         Theme.DarkTitleBar(this);
 
-        var poll = new System.Windows.Forms.Timer { Interval = 1200 };
+        _tray = new NotifyIcon { Visible = true, Text = "FreeVoice Studio" };
+        try { _tray.Icon = new Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); }
+        catch { _tray.Icon = SystemIcons.Application; }
+        _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
+
+        var poll = new System.Windows.Forms.Timer { Interval = 1000 };
         poll.Tick += async (_, _) => await RefreshState();
         poll.Start();
 
@@ -80,7 +88,16 @@ public sealed class MainForm : Form
                 MessageBox.Show(_supervisor.LastError, "FreeVoice", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             await RefreshState();
         };
-        FormClosed += (_, _) => { _player.Dispose(); _supervisor.Dispose(); };
+        FormClosed += (_, _) =>
+        {
+            if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
+            _player.Dispose();
+            // if jobs are still rendering, let the engine finish them in the background —
+            // the results land in the Library next time the app opens
+            if (_state.Jobs.Any(j => j.State is "queued" or "running"))
+                _supervisor.Detach();
+            _supervisor.Dispose();
+        };
     }
 
     #region layout scaffolding
@@ -212,7 +229,7 @@ public sealed class MainForm : Form
         {
             Multiline = true,
             Location = new Point(0, y),
-            Size = new Size(800, 170),
+            Size = new Size(780, 170),
             Font = new Font("Segoe UI", 10.5f),
             ScrollBars = ScrollBars.Vertical,
             AcceptsReturn = true,
@@ -222,11 +239,11 @@ public sealed class MainForm : Form
 
         _wordInfo = new Label { Location = new Point(2, y), AutoSize = true, ForeColor = Theme.Dim, Font = new Font("Segoe UI", 8.75f) };
         p.Controls.Add(_wordInfo);
-        _title = new TextBox { Location = new Point(560, y - 3), Width = 240, Font = new Font("Segoe UI", 9f), PlaceholderText = "output name (optional)" };
+        _title = new TextBox { Location = new Point(540, y - 3), Width = 240, Font = new Font("Segoe UI", 9f), PlaceholderText = "output name (optional)" };
         p.Controls.Add(_title); y += 34;
 
         p.Controls.Add(SmallLabel("Engine", 0, y)); y += 20;
-        _engineRow = new FlowLayoutPanel { Location = new Point(0, y), Size = new Size(810, 126), BackColor = Theme.Back };
+        _engineRow = new FlowLayoutPanel { Location = new Point(0, y), Size = new Size(790, 126), BackColor = Theme.Back };
         p.Controls.Add(_engineRow); y += 132;
 
         p.Controls.Add(SmallLabel("Voice", 0, y));
@@ -250,22 +267,42 @@ public sealed class MainForm : Form
         y += 44;
 
         p.Controls.Add(SmallLabel("Delivery", 0, y)); y += 20;
-        _exaggeration = new FvSlider("Emotion (Chatterbox)", 0.25, 1.0, 0.5, 0.05) { Location = new Point(0, y), Width = 385 };
-        _cfg = new FvSlider("Pace — lower = slower read", 0.2, 0.8, 0.5, 0.05) { Location = new Point(415, y), Width = 385 };
+        _exaggeration = new FvSlider("Emotion (Chatterbox)", 0.25, 1.0, 0.5, 0.05) { Location = new Point(0, y), Width = 370 };
+        _cfg = new FvSlider("Pace — lower = slower read", 0.2, 0.8, 0.5, 0.05) { Location = new Point(410, y), Width = 370 };
         y += 50;
-        _speed = new FvSlider("Speed (Kokoro / F5)", 0.7, 1.4, 1.0, 0.05) { Location = new Point(0, y), Width = 385 };
-        _nfe = new FvSlider("Quality steps (F5)", 16, 64, 32, 4, v => ((int)v).ToString()) { Location = new Point(415, y), Width = 385 };
+        _speed = new FvSlider("Speed (Kokoro / F5)", 0.7, 1.4, 1.0, 0.05) { Location = new Point(0, y), Width = 370 };
+        _nfe = new FvSlider("Quality steps (F5)", 16, 64, 32, 4, v => ((int)v).ToString()) { Location = new Point(410, y), Width = 370 };
         p.Controls.Add(_exaggeration);
         p.Controls.Add(_cfg);
         p.Controls.Add(_speed);
         p.Controls.Add(_nfe);
-        y += 58;
+        y += 52;
 
-        _generate = new GradientButton { Text = "Generate", Location = new Point(0, y), Size = new Size(800, 46) };
+        p.Controls.Add(new Label
+        {
+            Text = "Seed — same seed + same script repeats a take exactly; 0 = surprise me",
+            ForeColor = Theme.Dim,
+            Font = new Font("Segoe UI", 8.5f),
+            Location = new Point(0, y + 4),
+            AutoSize = true,
+        });
+        _seed = new NumericUpDown
+        {
+            Location = new Point(430, y),
+            Width = 100,
+            Minimum = 0,
+            Maximum = 999999,
+            BackColor = Theme.Card2,
+            ForeColor = Theme.Text,
+        };
+        p.Controls.Add(_seed);
+        y += 40;
+
+        _generate = new GradientButton { Text = "Generate", Location = new Point(0, y), Size = new Size(780, 46) };
         _generate.Click += async (_, _) => await OnGenerate();
         p.Controls.Add(_generate); y += 58;
 
-        _jobsPanel = new Panel { Location = new Point(0, y), Size = new Size(810, 400), BackColor = Theme.Back, AutoSize = true };
+        _jobsPanel = new Panel { Location = new Point(0, y), Size = new Size(790, 400), BackColor = Theme.Back, AutoSize = true };
         p.Controls.Add(_jobsPanel);
 
         UpdateWordInfo();
@@ -328,15 +365,28 @@ public sealed class MainForm : Form
                 cfg = _cfg.Value,
                 speed = _speed.Value,
                 nfe = _nfe.Value,
+                seed = (int)_seed.Value,
             },
             effect = _effect.SelectedItem as string ?? "None",
             clean = _clean.Checked,
             format = _format.Value.ToLowerInvariant(),
         };
+        _generate.Enabled = false;
+        _generate.Text = "Queued ✓";
         var (ok, msg) = await _client.GenerateAsync(payload);
         if (!ok)
             MessageBox.Show(msg, "FreeVoice", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         await RefreshState();
+
+        var restore = new System.Windows.Forms.Timer { Interval = 1600 };
+        restore.Tick += (_, _) =>
+        {
+            restore.Stop();
+            restore.Dispose();
+            _generate.Text = "Generate";
+            _generate.Enabled = true;
+        };
+        restore.Start();
     }
 
     private void RenderJobs()
@@ -358,7 +408,7 @@ public sealed class MainForm : Form
     private Panel BuildJobRow(JobDto j)
     {
         bool running = j.State == "running";
-        var row = new Panel { Size = new Size(800, running ? 74 : 62), BackColor = Theme.Card2 };
+        var row = new Panel { Size = new Size(780, running ? 74 : 62), BackColor = Theme.Card2 };
         row.Paint += (_, e) =>
         {
             e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -388,17 +438,30 @@ public sealed class MainForm : Form
             using var subFont = new Font("Segoe UI", 8.75f);
             using var subBrush = new SolidBrush(Theme.Sub);
             string status = j.StatusText;
-            if (running && j.EtaSeconds is int eta)
-                status += eta < 90 ? $" · ~{eta}s left" : $" · ~{eta / 60.0:0.0} min left";
+            double elapsed = j.Started is double st
+                ? Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 - st)
+                : 0;
+            if (running && j.Started != null)
+            {
+                int remaining = Math.Max(0, (j.EstSeconds ?? 0) - (int)elapsed);
+                status += $"  ·  {FmtTime(elapsed)} elapsed";
+                if (j.EstSeconds != null)
+                    status += remaining > 0 ? $" · ~{FmtTime(remaining)} left" : " · almost done…";
+            }
             e.Graphics.DrawString(status, subFont, subBrush, 80, 30);
 
-            if (running && j.Total > 0)
+            if (running)
             {
                 var track = new RectangleF(14, row.Height - 14, row.Width - 28, 5);
                 using var trackBg = new SolidBrush(Color.FromArgb(42, 42, 56));
                 using var trackPath = Theme.Rounded(track, 2.5f);
                 e.Graphics.FillPath(trackBg, trackPath);
-                float t = (float)j.Done / j.Total;
+
+                // progress = the better of chunk progress and time progress, capped at 97%
+                float chunkFrac = j.Total > 0 ? (float)j.Done / j.Total : 0;
+                float timeFrac = j.EstSeconds is int est and > 0 ? (float)(elapsed / est) : 0;
+                float t = Math.Clamp(Math.Max(chunkFrac, timeFrac), 0.02f, 0.97f);
+
                 var fill = new RectangleF(track.X, track.Y, Math.Max(4, track.Width * t), track.Height);
                 using var fillBrush = new System.Drawing.Drawing2D.LinearGradientBrush(fill, Theme.A1, Theme.A2, 0f);
                 using var fillPath = Theme.Rounded(fill, 2.5f);
@@ -420,7 +483,7 @@ public sealed class MainForm : Form
             row.Controls.Add(cancel);
         }
 
-        var close = MakeMiniButton("✕", new Point(740, 16));
+        var close = MakeMiniButton("✕", new Point(724, 16));
         close.Width = 40;
         close.Click += async (_, _) =>
         {
@@ -433,6 +496,9 @@ public sealed class MainForm : Form
 
         return row;
     }
+
+    private static string FmtTime(double s)
+        => s < 60 ? $"{s:0}s" : $"{(int)s / 60}:{(int)s % 60:00}";
 
     private static Button MakeMiniButton(string text, Point loc) => new()
     {
@@ -509,6 +575,9 @@ public sealed class MainForm : Form
         {
             var row = new Panel { Size = new Size(760, 58), Location = new Point(0, y), BackColor = Theme.Card2 };
             var voice = v;
+            string? avatarPath = _supervisor.BackendDir != null
+                ? Path.Combine(_supervisor.BackendDir, "voices", v.Name + ".png")
+                : null;
             row.Paint += (_, e) =>
             {
                 e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -520,26 +589,45 @@ public sealed class MainForm : Form
                 e.Graphics.DrawPath(pen, path);
 
                 var av = new RectangleF(12, 11, 36, 36);
-                using var avBrush = new System.Drawing.Drawing2D.LinearGradientBrush(av, Theme.A1, Theme.A2, 45f);
-                e.Graphics.FillEllipse(avBrush, av);
-                using var avFont = new Font("Segoe UI Semibold", 13f);
-                e.Graphics.DrawString(voice.Name[..1].ToUpperInvariant(), avFont, Brushes.White, av.X + 8, av.Y + 5);
+                if (avatarPath != null && File.Exists(avatarPath))
+                {
+                    try
+                    {
+                        using var img = Image.FromFile(avatarPath);
+                        using var clip = new System.Drawing.Drawing2D.GraphicsPath();
+                        clip.AddEllipse(av);
+                        e.Graphics.SetClip(clip);
+                        e.Graphics.DrawImage(img, av);
+                        e.Graphics.ResetClip();
+                    }
+                    catch { DrawInitialAvatar(e.Graphics, av, voice.Name); }
+                }
+                else
+                {
+                    DrawInitialAvatar(e.Graphics, av, voice.Name);
+                }
 
                 using var nameFont = new Font("Segoe UI Semibold", 10.5f);
                 using var textBrush = new SolidBrush(Theme.Text);
                 e.Graphics.DrawString(voice.Name, nameFont, textBrush, 60, 9);
                 using var subFont = new Font("Segoe UI", 8.5f);
                 using var subBrush = new SolidBrush(Theme.Dim);
-                e.Graphics.DrawString($"{voice.Seconds:0.#}s sample", subFont, subBrush, 60, 31);
+                string sub = $"{voice.Seconds:0.#}s sample" +
+                             (voice.Transcript.Length > 0 ? "  ·  transcript ✓" : "");
+                e.Graphics.DrawString(sub, subFont, subBrush, 60, 31);
             };
 
             if (_supervisor.BackendDir != null)
             {
                 string path = Path.Combine(_supervisor.BackendDir, "voices", v.File);
-                var play = MakeMiniButton(_player.Playing == path ? "■ stop" : "► play", new Point(560, 14));
+                var play = MakeMiniButton(_player.Playing == path ? "■ stop" : "► play", new Point(470, 14));
                 play.Click += (_, _) => _player.Toggle(path);
                 row.Controls.Add(play);
             }
+            var edit = MakeMiniButton("edit", new Point(578, 14));
+            edit.Width = 80;
+            edit.Click += (_, _) => ShowEditVoice(voice);
+            row.Controls.Add(edit);
             var del = MakeMiniButton("delete", new Point(668, 14));
             del.Width = 80;
             del.Click += async (_, _) =>
@@ -568,6 +656,127 @@ public sealed class MainForm : Form
         }
         _voiceList.Height = Math.Max(40, y);
         _voiceList.ResumeLayout();
+    }
+
+    private static void DrawInitialAvatar(Graphics g, RectangleF av, string name)
+    {
+        using var avBrush = new System.Drawing.Drawing2D.LinearGradientBrush(av, Theme.A1, Theme.A2, 45f);
+        g.FillEllipse(avBrush, av);
+        using var avFont = new Font("Segoe UI Semibold", 13f);
+        string initial = name.Length > 0 ? name[..1].ToUpperInvariant() : "?";
+        g.DrawString(initial, avFont, Brushes.White, av.X + 8, av.Y + 5);
+    }
+
+    /// <summary>Edit a voice: rename, transcript, profile picture. Direct file ops — the backend is local.</summary>
+    private void ShowEditVoice(VoiceDto v)
+    {
+        if (_supervisor.BackendDir == null) return;
+        string voicesDir = Path.Combine(_supervisor.BackendDir, "voices");
+
+        using var dlg = new Form
+        {
+            Text = $"Edit voice — {v.Name}",
+            Size = new Size(480, 300),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Theme.Back,
+        };
+        Theme.DarkTitleBar(dlg);
+
+        dlg.Controls.Add(SmallLabel("Name", 20, 20));
+        var name = new TextBox { Text = v.Name, Location = new Point(20, 42), Width = 420 };
+        dlg.Controls.Add(name);
+
+        dlg.Controls.Add(SmallLabel("Transcript of the sample (helps F5 accuracy)", 20, 80));
+        var transcript = new TextBox
+        {
+            Text = v.Transcript,
+            Location = new Point(20, 102),
+            Size = new Size(420, 52),
+            Multiline = true,
+        };
+        dlg.Controls.Add(transcript);
+
+        dlg.Controls.Add(SmallLabel("Profile picture", 20, 166));
+        string? newAvatar = null;
+        string avatarPath = Path.Combine(voicesDir, v.Name + ".png");
+        var picBtn = new Button
+        {
+            Text = File.Exists(avatarPath) ? "Change picture…" : "Choose picture…",
+            Location = new Point(20, 188),
+            Size = new Size(140, 30),
+        };
+        var picLabel = new Label { Location = new Point(170, 195), AutoSize = true, ForeColor = Theme.Sub };
+        picBtn.Click += (_, _) =>
+        {
+            using var ofd = new OpenFileDialog { Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.webp" };
+            if (ofd.ShowDialog(dlg) == DialogResult.OK)
+            {
+                newAvatar = ofd.FileName;
+                picLabel.Text = Path.GetFileName(ofd.FileName);
+            }
+        };
+        dlg.Controls.Add(picBtn);
+        dlg.Controls.Add(picLabel);
+
+        var save = new GradientButton { Text = "Save", Location = new Point(230, 226), Size = new Size(100, 32), DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Cancel", Location = new Point(340, 226), Size = new Size(100, 32), DialogResult = DialogResult.Cancel };
+        dlg.Controls.Add(save);
+        dlg.Controls.Add(cancel);
+        Theme.Apply(dlg);
+
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            string newName = new string(name.Text.Trim()
+                .Where(c => char.IsLetterOrDigit(c) || c is ' ' or '-' or '_').ToArray());
+            if (newName.Length == 0) newName = v.Name;
+
+            // rename sample + sidecar files if the name changed
+            if (!newName.Equals(v.Name, StringComparison.Ordinal))
+            {
+                string ext = Path.GetExtension(v.File);
+                File.Move(Path.Combine(voicesDir, v.File), Path.Combine(voicesDir, newName + ext), overwrite: false);
+                foreach (var side in new[] { ".txt", ".png" })
+                {
+                    string old = Path.Combine(voicesDir, v.Name + side);
+                    if (File.Exists(old))
+                        File.Move(old, Path.Combine(voicesDir, newName + side), overwrite: true);
+                }
+            }
+
+            string txtPath = Path.Combine(voicesDir, newName + ".txt");
+            if (transcript.Text.Trim().Length > 0)
+                File.WriteAllText(txtPath, transcript.Text.Trim());
+            else if (File.Exists(txtPath))
+                File.Delete(txtPath);
+
+            if (newAvatar != null)
+            {
+                using var img = Image.FromFile(newAvatar);
+                using var square = new Bitmap(128, 128);
+                using (var g = Graphics.FromImage(square))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    // center-crop to square
+                    int side = Math.Min(img.Width, img.Height);
+                    g.DrawImage(img, new Rectangle(0, 0, 128, 128),
+                        new Rectangle((img.Width - side) / 2, (img.Height - side) / 2, side, side),
+                        GraphicsUnit.Pixel);
+                }
+                square.Save(Path.Combine(voicesDir, newName + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+
+            _lastVoicesJson = ""; // force re-render
+            _ = RefreshState();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't save: {ex.Message}", "FreeVoice", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     #endregion
@@ -684,6 +893,21 @@ public sealed class MainForm : Form
         bool first = !_connected;
         _connected = true;
         _state = s;
+
+        // native notifications when a job finishes
+        foreach (var j in s.Jobs)
+        {
+            _knownJobStates.TryGetValue(j.Id, out var prev);
+            if (prev is "running" or "queued" && j.State is "done" or "error")
+            {
+                string title = string.IsNullOrEmpty(j.Title) ? $"{j.Words} words" : j.Title;
+                _tray?.ShowBalloonTip(4000,
+                    j.State == "done" ? "FreeVoice — narration ready" : "FreeVoice — job failed",
+                    j.State == "done" ? $"\"{title}\" — {j.StatusText}" : $"\"{title}\": {j.StatusText}",
+                    j.State == "done" ? ToolTipIcon.Info : ToolTipIcon.Warning);
+            }
+            _knownJobStates[j.Id] = j.State;
+        }
         if (first)
         {
             SetStatus("");
@@ -706,10 +930,11 @@ public sealed class MainForm : Form
         string outputsJson = System.Text.Json.JsonSerializer.Serialize(_state.Outputs);
         string playKey = _player.Playing ?? "";
 
-        if (jobsJson + playKey != _lastJobsJson)
+        bool anyRunning = _state.Jobs.Any(j => j.State == "running");
+        if (jobsJson + playKey != _lastJobsJson || anyRunning)
         {
             _lastJobsJson = jobsJson + playKey;
-            RenderJobs();
+            RenderJobs(); // rebuilt every tick while running so elapsed/remaining stay live
         }
         if (voicesJson + playKey != _lastVoicesJson)
         {
@@ -731,3 +956,4 @@ public sealed class MainForm : Form
 
     #endregion
 }
+

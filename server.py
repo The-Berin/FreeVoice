@@ -10,14 +10,13 @@ import traceback
 import uuid
 
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 import core
 
 app = FastAPI(title="FreeVoice")
-WEB = os.path.join(core.BASE, "web")
 
 jobs = {}          # id -> job dict
 job_order = []     # newest first
@@ -83,6 +82,7 @@ async def generate(payload: dict):
         "state": "queued",
         "status_text": "queued",
         "done": 0, "total": 0, "eta_seconds": None,
+        "est_seconds": None, "started": None,
         "created": time.time(),
         "words": len(script.split()),
     }
@@ -144,11 +144,6 @@ def remove_output(filename: str):
 def open_folder():
     subprocess.Popen(["explorer", core.OUTPUT_DIR])
     return {"ok": True}
-
-
-@app.get("/")
-def index():
-    return FileResponse(os.path.join(WEB, "index.html"))
 
 
 app.mount("/files/output", StaticFiles(directory=core.OUTPUT_DIR), name="output")

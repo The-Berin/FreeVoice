@@ -20,7 +20,7 @@ public sealed class EngineCard : Panel
     public EngineCard(string id, string name, int tier, string desc, string speed)
     {
         EngineId = id; _name = name; _tier = tier; _desc = desc; _speed = speed;
-        Size = new Size(226, 118);
+        Size = new Size(242, 104);
         Cursor = Cursors.Hand;
         DoubleBuffered = true;
         BackColor = Theme.Card2;
@@ -31,7 +31,7 @@ public sealed class EngineCard : Panel
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.Clear(Theme.Card);
+        g.Clear(Parent?.BackColor ?? Theme.Back); // corners must match the page, not the card
 
         var rect = new RectangleF(1, 1, Width - 3, Height - 3);
         using (var bg = new SolidBrush(Theme.Card2))
@@ -57,13 +57,13 @@ public sealed class EngineCard : Panel
         using var badgeText = new SolidBrush(_tier == 3 ? Color.White : Theme.Sub);
         g.DrawString($"TIER {_tier}", badgeFont, badgeText, badgeRect.X + 7, badgeRect.Y + 3);
 
-        using var descFont = new Font("Segoe UI", 8.5f);
+        using var descFont = new Font("Segoe UI", 8.25f);
         using var subBrush = new SolidBrush(Theme.Sub);
-        g.DrawString(_desc, descFont, subBrush, new RectangleF(14, 38, Width - 26, 52));
+        g.DrawString(_desc, descFont, subBrush, new RectangleF(14, 36, Width - 26, 42));
 
         using var dimBrush = new SolidBrush(Theme.Dim);
-        using var speedFont = new Font("Segoe UI", 8f);
-        g.DrawString(_speed, speedFont, dimBrush, 14, Height - 24);
+        using var speedFont = new Font("Segoe UI", 7.75f);
+        g.DrawString(_speed, speedFont, dimBrush, 14, Height - 21);
     }
 }
 
@@ -228,6 +228,58 @@ public sealed class Segmented : Control
             var size = g.MeasureString(_options[i], font);
             g.DrawString(_options[i], font, brush, seg.X + (seg.Width - size.Width) / 2, seg.Y + (seg.Height - size.Height) / 2);
         }
+    }
+}
+
+/// <summary>Thin draggable seek bar for the player.</summary>
+public sealed class SeekBar : Control
+{
+    private double _frac;
+    private bool _drag;
+    /// <summary>0..1 position. Setting from code while the user drags is ignored.</summary>
+    public double Fraction
+    {
+        get => _frac;
+        set { if (!_drag) { _frac = Math.Clamp(value, 0, 1); Invalidate(); } }
+    }
+    public event Action<double>? Seeked;
+
+    public SeekBar()
+    {
+        Size = new Size(300, 18);
+        DoubleBuffered = true;
+        Cursor = Cursors.Hand;
+    }
+
+    private void FromMouse(int x)
+    {
+        _frac = Math.Clamp((double)x / Math.Max(1, Width), 0, 1);
+        Invalidate();
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e) { _drag = true; FromMouse(e.X); }
+    protected override void OnMouseMove(MouseEventArgs e) { if (_drag) FromMouse(e.X); }
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        if (_drag) { _drag = false; Seeked?.Invoke(_frac); }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Parent?.BackColor ?? Theme.Card);
+        var track = new RectangleF(0, Height / 2f - 2.5f, Width, 5);
+        using (var bg = new SolidBrush(Color.FromArgb(44, 44, 58)))
+        using (var path = Theme.Rounded(track, 2.5f))
+            g.FillPath(bg, path);
+        var fill = new RectangleF(track.X, track.Y, Math.Max(5, (float)(track.Width * _frac)), track.Height);
+        using (var fb = new LinearGradientBrush(fill, Theme.A1, Theme.A2, 0f))
+        using (var path = Theme.Rounded(fill, 2.5f))
+            g.FillPath(fb, path);
+        float cx = (float)(track.Width * _frac);
+        using var thumb = new SolidBrush(Color.White);
+        g.FillEllipse(thumb, cx - 5, Height / 2f - 5, 10, 10);
     }
 }
 

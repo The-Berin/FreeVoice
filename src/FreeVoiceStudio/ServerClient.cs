@@ -93,11 +93,17 @@ public sealed class ServerClient
         }
     }
 
+    // offline-safe: a dead server must never bubble a socket exception into the UI thread
+    private static async Task Quiet(Func<Task> action)
+    {
+        try { await action(); } catch { }
+    }
+
     public Task CancelJobAsync(string id)
-        => Http.PostAsync($"{BaseUrl}/api/job/{id}/cancel", null);
+        => Quiet(() => Http.PostAsync($"{BaseUrl}/api/job/{id}/cancel", null));
 
     public Task RemoveJobAsync(string id)
-        => Http.DeleteAsync($"{BaseUrl}/api/job/{id}");
+        => Quiet(() => Http.DeleteAsync($"{BaseUrl}/api/job/{id}"));
 
     public async Task<(bool Ok, string Message)> AddVoiceAsync(string filePath, string name, string transcript)
     {
@@ -126,11 +132,11 @@ public sealed class ServerClient
     }
 
     public Task DeleteVoiceAsync(string name)
-        => Http.DeleteAsync($"{BaseUrl}/api/voices/{Uri.EscapeDataString(name)}");
+        => Quiet(() => Http.DeleteAsync($"{BaseUrl}/api/voices/{Uri.EscapeDataString(name)}"));
 
     public Task DeleteOutputAsync(string file)
-        => Http.DeleteAsync($"{BaseUrl}/api/outputs/{Uri.EscapeDataString(file)}");
+        => Quiet(() => Http.DeleteAsync($"{BaseUrl}/api/outputs/{Uri.EscapeDataString(file)}"));
 
     public Task OpenFolderAsync()
-        => Http.PostAsync($"{BaseUrl}/api/open-folder", null);
+        => Quiet(() => Http.PostAsync($"{BaseUrl}/api/open-folder", null));
 }

@@ -51,6 +51,18 @@ def worker():
 threading.Thread(target=worker, daemon=True, name="FreeVoiceWorker").start()
 
 
+def _preload():
+    """Warm the main engine at startup so the first job doesn't pay the 1-2 min load."""
+    try:
+        core.get_chatterbox()
+        print("[preload] chatterbox warm", flush=True)
+    except Exception as e:
+        print(f"[preload] skipped: {e}", flush=True)
+
+
+threading.Thread(target=_preload, daemon=True, name="FreeVoicePreload").start()
+
+
 @app.get("/api/state")
 def state():
     return {

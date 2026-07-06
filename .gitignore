@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+output/
+models/
+voices/*
+!voices/.gitkeep
+src/FreeVoiceStudio/bin/
+src/FreeVoiceStudio/obj/
+dist/
+publish/
+*.user

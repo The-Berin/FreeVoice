@@ -1,0 +1,13 @@
+# FreeVoice engine dependencies — Python 3.12 recommended
+# Install: pip install -r requirements.txt
+chatterbox-tts        # Tier 3 engine (pulls torch + torchaudio CPU)
+f5-tts                # Tier 3 cloning engine
+kokoro-onnx           # Tier 2 instant engine (model files auto-download on first use)
+noisereduce           # "Clean audio" denoise
+pedalboard            # VoiceBox-style effects (Deep Voice / Radio / Echo / Robotic)
+pyloudnorm            # loudness normalization to -16 LUFS
+librosa               # audio loading for voice samples
+soundfile
+fastapi               # local engine server
+uvicorn
+python-multipart      # voice sample uploads

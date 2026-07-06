@@ -4,7 +4,7 @@
 
 Voice cloning from a few seconds of audio, ElevenLabs-grade narration, instant drafts, multi-voice dialog scripts, batch queues, and studio effects — with nothing ever leaving your machine. No account, no subscription, no word limits, no cloud.
 
-| Tier | Engine | Voice cloning | Quality | Speed (old 4-core CPU) |
+| Tier | Engine | Voice cloning | Quality | Speed |
 |---|---|---|---|---|
 | **3** | [Chatterbox](https://github.com/resemble-ai/chatterbox) | ✓ | Beat ElevenLabs 65%–24% in blind tests | ~3s per word |
 | **3** | [F5-TTS](https://github.com/SWivid/F5-TTS) | ✓ | Research-grade cloning specialist | ~4s per word |

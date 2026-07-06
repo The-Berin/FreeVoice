@@ -15,12 +15,8 @@ public sealed class MainForm : Form
     private NotifyIcon? _tray;
     private readonly Dictionary<string, string> _knownJobStates = new();
 
-    // custom chrome
-    private Panel _titleBar = null!;
-    private const int ResizeMargin = 7;
-
-    private readonly Panel _sidebar = new EdgeAwarePanel();
-    private readonly Panel _content = new EdgeAwarePanel();
+    private readonly Panel _sidebar = new();
+    private readonly Panel _content = new();
     private readonly Dictionary<string, Panel> _pages = new();
     private readonly Dictionary<string, Button> _nav = new();
     private Label _sideStatus = null!;
@@ -60,27 +56,22 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        // Borderless-with-native-behaviors: WS_CAPTION + WS_THICKFRAME are re-added in
-        // CreateParams and the caption is reclaimed in WM_NCCALCSIZE — so move, Aero
-        // snap, animations and shadows are all native, but Windows never paints its
-        // (accent-colored) title bar or border.
-        FormBorderStyle = FormBorderStyle.None;
+        // Real native title bar — dark via DWM. The green accent came from the Windows
+        // "accent color on title bars" setting, which is disabled machine-side instead.
         Text = "FreeVoice Studio";
         Size = new Size(1080, 700);
         MinimumSize = new Size(960, 640);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Back;
         Font = new Font("Segoe UI", 9.5f);
-        SetStyle(ControlStyles.ResizeRedraw, true);
         try { Icon = new Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); } catch { }
+        HandleCreated += (_, _) => Theme.DarkTitleBar(this);
 
-        BuildTitleBar();
         BuildSidebar();
         _content.Dock = DockStyle.Fill;
         _content.Padding = new Padding(28, 18, 24, 18);
         Controls.Add(_content);
         Controls.Add(_sidebar);
-        Controls.Add(_titleBar);
 
         AddPage("Studio", BuildStudio());
         AddPage("Voices", BuildVoices());
@@ -99,9 +90,19 @@ public sealed class MainForm : Form
         poll.Tick += async (_, _) => await RefreshState();
         poll.Start();
 
-        var playerTick = new System.Windows.Forms.Timer { Interval = 250 };
+        var playerTick = new System.Windows.Forms.Timer { Interval = 100 };
         playerTick.Tick += (_, _) => UpdatePlayerBar();
         playerTick.Start();
+
+        // 60fps repaint of running job rows — the time-based progress bar glides
+        var anim = new System.Windows.Forms.Timer { Interval = 16 };
+        anim.Tick += (_, _) =>
+        {
+            foreach (var (row, holder) in _jobRows.Values)
+                if (holder.Job.State == "running")
+                    row.Invalidate();
+        };
+        anim.Start();
 
         _player.PlaybackChanged += () => { if (!IsDisposed) BeginInvoke(() => { UpdatePlayButtons(); UpdatePlayerBar(); }); };
 
@@ -122,140 +123,6 @@ public sealed class MainForm : Form
             _supervisor.Dispose();
         };
     }
-
-    #region custom chrome
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            var cp = base.CreateParams;
-            const int WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000,
-                      WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000;
-            cp.Style |= WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-            return cp;
-        }
-    }
-
-    private void BuildTitleBar()
-    {
-        _titleBar = new HitTransparentPanel { Dock = DockStyle.Top, Height = 34, BackColor = Theme.Panel };
-
-        var logo = new PictureBox
-        {
-            Size = new Size(18, 18),
-            Location = new Point(12, 8),
-            SizeMode = PictureBoxSizeMode.Zoom,
-            BackColor = Color.Transparent,
-        };
-        try { logo.Image = Image.FromFile(Path.Combine(AppContext.BaseDirectory, "Assets", "logo64.png")); } catch { }
-        var title = new Label
-        {
-            Text = "FreeVoice Studio",
-            ForeColor = Theme.Sub,
-            Font = new Font("Segoe UI", 9f),
-            Location = new Point(38, 8),
-            AutoSize = true,
-        };
-        _titleBar.Controls.Add(logo);
-        _titleBar.Controls.Add(title);
-
-        // caption buttons live on the FORM (the title panel is hit-transparent so
-        // native dragging works anywhere on it — its children would be skipped)
-        Button MakeCaption(string glyph, int fromRight, Action onClick, bool danger = false)
-        {
-            var b = new Button
-            {
-                Text = glyph,
-                Size = new Size(46, 33),
-                FlatStyle = FlatStyle.Flat,
-                ForeColor = Theme.Sub,
-                BackColor = Theme.Panel,
-                Font = new Font("Segoe UI", 9f),
-                Tag = "custom",
-                TabStop = false,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-            };
-            b.Location = new Point(Width - fromRight, 1);
-            b.FlatAppearance.BorderSize = 0;
-            b.FlatAppearance.MouseOverBackColor = danger ? Color.FromArgb(200, 55, 55) : Theme.Card2;
-            b.Click += (_, _) => onClick();
-            Controls.Add(b);
-            b.BringToFront();
-            return b;
-        }
-
-        MakeCaption("✕", 47, Close, danger: true);
-        MakeCaption("▢", 93, ToggleMaximize);
-        MakeCaption("—", 139, () => WindowState = FormWindowState.Minimized);
-    }
-
-    private void ToggleMaximize()
-        => WindowState = WindowState == FormWindowState.Maximized
-            ? FormWindowState.Normal
-            : FormWindowState.Maximized;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT { public int Left, Top, Right, Bottom; }
-
-    [DllImport("user32.dll")]
-    private static extern bool IsZoomed(IntPtr hWnd);
-
-    protected override void WndProc(ref Message m)
-    {
-        const int WM_NCCALCSIZE = 0x83, WM_NCHITTEST = 0x84;
-        const int HTCLIENT = 1, HTCAPTION = 2;
-        const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
-                  HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
-
-        // claim the entire window as client area — Windows never draws its caption/border
-        if (m.Msg == WM_NCCALCSIZE && m.WParam != IntPtr.Zero)
-        {
-            if (IsZoomed(Handle))
-            {
-                // maximized windows extend past the monitor by the (now-hidden) frame — pull back in
-                var rc = Marshal.PtrToStructure<RECT>(m.LParam);
-                int pad = 8;
-                rc.Left += pad; rc.Top += pad; rc.Right -= pad; rc.Bottom -= pad;
-                Marshal.StructureToPtr(rc, m.LParam, false);
-            }
-            m.Result = IntPtr.Zero;
-            return;
-        }
-
-        base.WndProc(ref m);
-
-        if (m.Msg == WM_NCHITTEST && (int)m.Result == HTCLIENT)
-        {
-            var pt = PointToClient(new Point((short)(m.LParam.ToInt64() & 0xFFFF),
-                                             (short)((m.LParam.ToInt64() >> 16) & 0xFFFF)));
-
-            if (!IsZoomed(Handle))
-            {
-                bool left = pt.X < ResizeMargin, right = pt.X >= Width - ResizeMargin;
-                bool top = pt.Y < ResizeMargin, bottom = pt.Y >= Height - ResizeMargin;
-                int hit = (top, bottom, left, right) switch
-                {
-                    (true, _, true, _) => HTTOPLEFT,
-                    (true, _, _, true) => HTTOPRIGHT,
-                    (_, true, true, _) => HTBOTTOMLEFT,
-                    (_, true, _, true) => HTBOTTOMRIGHT,
-                    (true, _, _, _) => HTTOP,
-                    (_, true, _, _) => HTBOTTOM,
-                    (_, _, true, _) => HTLEFT,
-                    (_, _, _, true) => HTRIGHT,
-                    _ => 0,
-                };
-                if (hit != 0) { m.Result = hit; return; }
-            }
-
-            // the title strip is a native caption: drag, snap, double-click-maximize all work
-            if (pt.Y < _titleBar.Height)
-                m.Result = HTCAPTION;
-        }
-    }
-
-    #endregion
 
     #region layout scaffolding
 
@@ -484,7 +351,7 @@ public sealed class MainForm : Form
         if (eng != null && words > 0)
         {
             double s = words * eng.SecPerWord;
-            eta = s < 90 ? $" · ≈{Math.Ceiling(s):0}s render" : $" · ≈{s / 60:0.0} min render";
+            eta = $" · ≈{FmtTime(s)} render";
         }
         _wordInfo.Text = $"{words} {(words == 1 ? "word" : "words")}{eta}";
     }

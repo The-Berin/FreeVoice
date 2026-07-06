@@ -39,13 +39,27 @@ def worker():
         job["status_text"] = "loading model…"
         try:
             out = core.generate(job)
-            job["result"] = os.path.basename(out)
-            job["state"] = "done"
-            job["status_text"] = f"{job['seconds_audio']/60:.1f} min of audio in {job['seconds_taken']/60:.1f} min"
+            if job.get("cancel"):
+                # cancelled mid-chunk: the chunk had to finish, but the user said stop
+                try:
+                    os.remove(out)
+                except OSError:
+                    pass
+                job["state"] = "cancelled"
+                job["status_text"] = "cancelled"
+            else:
+                job["result"] = os.path.basename(out)
+                job["state"] = "done"
+                job["status_text"] = f"{_mmss(job['seconds_audio'])} of audio in {_mmss(job['seconds_taken'])}"
         except Exception as e:
             traceback.print_exc()
             job["state"] = "cancelled" if str(e) == "cancelled" else "error"
-            job["status_text"] = str(e)[:300]
+            job["status_text"] = "cancelled" if str(e) == "cancelled" else str(e)[:300]
+
+
+def _mmss(seconds):
+    s = int(seconds)
+    return f"{s // 60}:{s % 60:02d}"
 
 
 threading.Thread(target=worker, daemon=True, name="FreeVoiceWorker").start()
@@ -109,9 +123,14 @@ async def generate(payload: dict):
 @app.post("/api/job/{job_id}/cancel")
 def cancel(job_id: str):
     if job_id in jobs:
-        jobs[job_id]["cancel"] = True
-        if jobs[job_id]["state"] == "queued":
-            jobs[job_id]["state"] = "cancelled"
+        job = jobs[job_id]
+        job["cancel"] = True
+        if job["state"] == "queued":
+            job["state"] = "cancelled"
+            job["status_text"] = "cancelled"
+        elif job["state"] == "running":
+            # the engine can't be interrupted mid-chunk — it stops at the next boundary
+            job["status_text"] = "cancelling — finishing current piece…"
     return {"ok": True}
 
 

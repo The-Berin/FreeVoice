@@ -140,20 +140,30 @@ public sealed class FvSlider : Control
     }
 }
 
-/// <summary>iOS-style toggle.</summary>
+/// <summary>iOS-style toggle with a 60fps knob slide.</summary>
 public sealed class FvToggle : Control
 {
     public bool Checked { get; set; }
     public event Action? Changed;
     private readonly string _label;
+    private float _knobX;
+    private readonly System.Windows.Forms.Timer _anim = new() { Interval = 15 };
 
     public FvToggle(string label, bool value)
     {
         _label = label; Checked = value;
+        _knobX = value ? 22 : 3;
         Size = new Size(220, 26);
         Cursor = Cursors.Hand;
         DoubleBuffered = true;
-        Click += (_, _) => { Checked = !Checked; Invalidate(); Changed?.Invoke(); };
+        _anim.Tick += (_, _) =>
+        {
+            float target = Checked ? 22 : 3;
+            _knobX += (target - _knobX) * 0.35f;
+            if (Math.Abs(target - _knobX) < 0.4f) { _knobX = target; _anim.Stop(); }
+            Invalidate();
+        };
+        Click += (_, _) => { Checked = !Checked; _anim.Start(); Changed?.Invoke(); };
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -163,27 +173,35 @@ public sealed class FvToggle : Control
         g.Clear(Parent?.BackColor ?? Theme.Card);
 
         var sw = new RectangleF(0, 3, 40, 21);
-        using (var bg = Checked
-                   ? (Brush)new LinearGradientBrush(sw, Theme.A1, Theme.A2, 0f)
-                   : new SolidBrush(Color.FromArgb(49, 49, 63)))
+        float blend = (_knobX - 3) / 19f; // 0 off → 1 on
+        var trackColor = Blend(Color.FromArgb(49, 49, 63), Theme.A1, blend);
+        using (var bg = new SolidBrush(trackColor))
         using (var path = Theme.Rounded(sw, 10.5f))
             g.FillPath(bg, path);
-        using var knob = new SolidBrush(Checked ? Color.White : Color.FromArgb(140, 140, 156));
-        g.FillEllipse(knob, Checked ? 22 : 3, 5.5f, 16, 16);
+        using var knob = new SolidBrush(Color.White);
+        g.FillEllipse(knob, _knobX, 5.5f, 16, 16);
 
         using var font = new Font("Segoe UI", 9f);
         using var brush = new SolidBrush(Theme.Sub);
         g.DrawString(_label, font, brush, 48, 4);
     }
+
+    private static Color Blend(Color a, Color b, float t)
+        => Color.FromArgb(
+            (int)(a.R + (b.R - a.R) * t),
+            (int)(a.G + (b.G - a.G) * t),
+            (int)(a.B + (b.B - a.B) * t));
 }
 
-/// <summary>Two-option segmented control (MP3 / WAV).</summary>
+/// <summary>Two-option segmented control with a sliding thumb (MP3 / WAV).</summary>
 public sealed class Segmented : Control
 {
     private readonly string[] _options;
     public int Index { get; private set; }
     public string Value => _options[Index];
     public event Action? Changed;
+    private float _thumbX = -1;
+    private readonly System.Windows.Forms.Timer _anim = new() { Interval = 15 };
 
     public Segmented(string[] options, int index = 0)
     {
@@ -191,17 +209,30 @@ public sealed class Segmented : Control
         Size = new Size(130, 32);
         Cursor = Cursors.Hand;
         DoubleBuffered = true;
+        _anim.Tick += (_, _) =>
+        {
+            float target = TargetX();
+            _thumbX += (target - _thumbX) * 0.35f;
+            if (Math.Abs(target - _thumbX) < 0.5f) { _thumbX = target; _anim.Stop(); }
+            Invalidate();
+        };
         Click += (_, e2) =>
         {
             var me = (MouseEventArgs)e2;
-            Index = Math.Min(_options.Length - 1, me.X * _options.Length / Math.Max(1, Width));
-            Invalidate();
+            int next = Math.Min(_options.Length - 1, me.X * _options.Length / Math.Max(1, Width));
+            if (next == Index) return;
+            Index = next;
+            _anim.Start();
             Changed?.Invoke();
         };
     }
 
+    private float SegWidth() => (float)Width / _options.Length;
+    private float TargetX() => Index * SegWidth() + 2;
+
     protected override void OnPaint(PaintEventArgs e)
     {
+        if (_thumbX < 0) _thumbX = TargetX();
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(Parent?.BackColor ?? Theme.Card);
@@ -213,67 +244,20 @@ public sealed class Segmented : Control
         using (var path = Theme.Rounded(rect, 9))
             g.DrawPath(pen, path);
 
-        float w = (float)Width / _options.Length;
+        float w = SegWidth();
+        var thumb = new RectangleF(_thumbX, 2, w - 4, Height - 5);
+        using (var sel = new LinearGradientBrush(thumb, Theme.A1, Theme.A2, 0f))
+        using (var path = Theme.Rounded(thumb, 7))
+            g.FillPath(sel, path);
+
         for (int i = 0; i < _options.Length; i++)
         {
             var seg = new RectangleF(i * w + 2, 2, w - 4, Height - 5);
-            if (i == Index)
-            {
-                using var sel = new LinearGradientBrush(seg, Theme.A1, Theme.A2, 0f);
-                using var path = Theme.Rounded(seg, 7);
-                g.FillPath(sel, path);
-            }
             using var font = new Font("Segoe UI", 9f, i == Index ? FontStyle.Bold : FontStyle.Regular);
             using var brush = new SolidBrush(i == Index ? Color.White : Theme.Sub);
             var size = g.MeasureString(_options[i], font);
             g.DrawString(_options[i], font, brush, seg.X + (seg.Width - size.Width) / 2, seg.Y + (seg.Height - size.Height) / 2);
         }
-    }
-}
-
-/// <summary>Panel that is transparent to mouse hit-testing — clicks and drags fall
-/// through to the form, giving native window dragging over the custom title bar.</summary>
-public class HitTransparentPanel : Panel
-{
-    protected override void WndProc(ref Message m)
-    {
-        const int WM_NCHITTEST = 0x84;
-        const int HTTRANSPARENT = -1;
-        if (m.Msg == WM_NCHITTEST)
-        {
-            m.Result = HTTRANSPARENT;
-            return;
-        }
-        base.WndProc(ref m);
-    }
-}
-
-/// <summary>Panel that lets hit-tests through only near the form's edges, so the
-/// native resize grips keep working under docked content.</summary>
-public class EdgeAwarePanel : Panel
-{
-    protected override void WndProc(ref Message m)
-    {
-        const int WM_NCHITTEST = 0x84;
-        const int HTTRANSPARENT = -1;
-        if (m.Msg == WM_NCHITTEST)
-        {
-            var form = FindForm();
-            if (form is { WindowState: FormWindowState.Normal })
-            {
-                var screenPt = new Point((short)(m.LParam.ToInt64() & 0xFFFF),
-                                         (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
-                var formPt = form.PointToClient(screenPt);
-                const int margin = 7;
-                if (formPt.X < margin || formPt.X >= form.Width - margin ||
-                    formPt.Y < margin || formPt.Y >= form.Height - margin)
-                {
-                    m.Result = HTTRANSPARENT;
-                    return;
-                }
-            }
-        }
-        base.WndProc(ref m);
     }
 }
 

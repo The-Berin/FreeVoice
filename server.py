@@ -76,6 +76,13 @@ def _preload():
 
 threading.Thread(target=_preload, daemon=True, name="FreeVoicePreload").start()
 
+try:
+    # batch renderer, not interactive: stay out of the way of live apps (FreeFlow dictation)
+    import psutil
+    psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+except Exception:
+    pass
+
 
 @app.get("/api/state")
 def state():

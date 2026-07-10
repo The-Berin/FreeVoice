@@ -1,3 +1,5 @@
+<img src="assets/banner.svg" alt="FreeVoice — free • local • private text-to-speech" width="100%" />
+
 # FreeVoice Studio
 
 **Every tier of AI text-to-speech in one native Windows app. Fully local. Free forever.**

@@ -1,0 +1,26 @@
+<svg width="1200" height="360" viewBox="0 0 1200 360" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="FreeVoice — free • local • private text-to-speech">
+<defs>
+<linearGradient id="freevoice-bg" x1="0" y1="0" x2="1200" y2="360" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#13131a"/><stop offset="1" stop-color="#1c182c"/></linearGradient>
+<radialGradient id="freevoice-glow" cx="219.5" cy="180.5" r="250" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#14b8a6" stop-opacity="0.20"/>
+<stop offset="1" stop-color="#14b8a6" stop-opacity="0"/></radialGradient>
+<linearGradient id="freevoice-icon" x1="126" y1="87" x2="313" y2="274" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#5eead4"/><stop offset="1" stop-color="#0d9488"/></linearGradient>
+<linearGradient id="freevoice-sheen" x1="126" y1="87" x2="222" y2="213" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+<filter id="freevoice-ds" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+<feDropShadow dx="0" dy="7" stdDeviation="11" flood-color="#000000" flood-opacity="0.33"/></filter>
+<linearGradient id="freevoice-title" x1="371" y1="118" x2="371" y2="190" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d7d7e2"/></linearGradient>
+</defs>
+<rect width="1200" height="360" fill="url(#freevoice-bg)"/>
+<rect width="1200" height="360" fill="url(#freevoice-glow)"/>
+<g fill="#272434"><rect x="746" y="174" width="36" height="133" rx="18"/><rect x="814" y="102" width="36" height="298" rx="18"/><rect x="882" y="142" width="36" height="196" rx="18"/><rect x="951" y="62" width="36" height="338" rx="18"/><rect x="1019" y="160" width="36" height="160" rx="18"/></g>
+<rect x="126" y="87" width="187" height="187" rx="30" fill="url(#freevoice-icon)" filter="url(#freevoice-ds)"/>
+<rect x="126" y="87" width="187" height="187" rx="30" fill="url(#freevoice-sheen)"/>
+<rect x="126.75" y="87.75" width="185.5" height="185.5" rx="29.25" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="1.5"/>
+<g transform="translate(219.5,180.5) scale(1.0872) translate(-150,-150)"><rect x="137" y="100" width="26" height="56" rx="13" fill="#fff"/><path d="M122 146 A28 28 0 0 0 178 146" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round"/><rect x="146" y="174" width="8" height="16" rx="2" fill="#fff"/><rect x="126" y="188" width="48" height="8" rx="4" fill="#fff"/></g>
+<text x="371" y="187" font-family="'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="88" font-weight="800" letter-spacing="-1" fill="url(#freevoice-title)">FreeVoice</text>
+<text x="366" y="248" font-family="'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif" font-size="30" font-weight="500" fill="#8b8b9a">free • local • private text-to-speech</text>
+</svg>
